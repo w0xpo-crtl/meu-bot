@@ -24,29 +24,16 @@ from telegram.error import TelegramError
 # ═══════════════════════════════════════════════════════
 
 CONFIG = {
-    # ── Bot ──────────────────────────────────────────
-    "TOKEN":            "7740841715:AAEHBEhh46VtwhN17OHsbefqqrM-snNAh_c",       # @BotFather
-    "ADMIN_ID":         8145171278,              # Seu ID (@userinfobot)
-
-    # ── Canal de conteúdo (opcional) ─────────────────
-    # Crie um canal privado, adicione o bot como admin
-    # e cole o ID aqui (ex: -1001234567890)
-    # Deixe "" para usar link externo
-    "CANAL_ID":         "",
-
-    # ── Link do conteúdo (se não usar canal) ─────────
-    "LINK_CONTEUDO":    "https://seusite.com/conteudo",
-
-    # ── PIX ──────────────────────────────────────────
-    "CHAVE_PIX":        "cbba5bc2-d199-41ce-b758-c019cee88cc3",
-    "NOME_RECEBEDOR":   "Kaua Gobo",
-
-    # ── Suporte ──────────────────────────────────────
-    "SUPORTE_USER":     "@W0xpo",
-
-    # ── Mercado Pago (deixe "" para usar PIX manual) ─
-    # Crie conta em mercadopago.com.br → Credenciais
-    "MP_ACCESS_TOKEN":  "",
+    # Lê automaticamente das variáveis de ambiente (Railway)
+    # ou usa os valores padrão abaixo como fallback
+    "TOKEN":            os.environ.get("TOKEN",           "SEU_TOKEN_AQUI"),
+    "ADMIN_ID":         int(os.environ.get("ADMIN_ID",    "123456789")),
+    "CANAL_ID":         os.environ.get("CANAL_ID",        ""),
+    "LINK_CONTEUDO":    os.environ.get("LINK_CONTEUDO",   "https://seusite.com/conteudo"),
+    "CHAVE_PIX":        os.environ.get("CHAVE_PIX",       "sua_chave_pix_aqui"),
+    "NOME_RECEBEDOR":   os.environ.get("NOME_RECEBEDOR",  "Seu Nome"),
+    "SUPORTE_USER":     os.environ.get("SUPORTE_USER",    "@seu_usuario"),
+    "MP_ACCESS_TOKEN":  os.environ.get("MP_ACCESS_TOKEN", ""),
 }
 
 # ── Planos de venda ──────────────────────────────────
