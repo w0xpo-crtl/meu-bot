@@ -24,6 +24,10 @@ CONFIG = {
     "NOME_RECEBEDOR":     os.environ.get("NOME_RECEBEDOR",    "Seu Nome"),
     "SUPORTE_USER":       os.environ.get("SUPORTE_USER",      "@seu_usuario"),
     "MP_ACCESS_TOKEN":    os.environ.get("MP_ACCESS_TOKEN",   ""),
+    # Grupo/chat onde os comprovantes serão enviados
+    # Pode ser o seu ID pessoal ou um grupo de admins
+    # Adicione no Railway: GRUPO_COMPROVANTES = -1009999999999
+    "GRUPO_COMPROVANTES": os.environ.get("GRUPO_COMPROVANTES", ""),
     "DELAY_ENTRE_MIDIAS": float(os.environ.get("DELAY_ENTRE_MIDIAS", "1.5")),  # segundos entre envios
 }
 
@@ -154,12 +158,22 @@ def desbloquear_usuario(user_id: int):
 def hash_arquivo(file_id: str) -> str:
     return hashlib.md5(file_id.encode()).hexdigest()
 
-def comprovante_ja_usado(file_id: str) -> bool:
+def comprovante_ja_usado(file_id: str, file_unique_id: str = "") -> bool:
+    """
+    Verifica fraude por dois métodos:
+    1. Hash do file_id (detecta reenvio exato)
+    2. file_unique_id (detecta mesmo arquivo renomeado/recomprimido)
+    """
     hashes = _ler(FRAUDE_FILE)
-    h = hash_arquivo(file_id)
-    if h in hashes:
+    h  = hash_arquivo(file_id)
+    hu = hash_arquivo(file_unique_id) if file_unique_id else None
+
+    if h in hashes or (hu and hu in hashes):
         return True
+
     hashes[h] = datetime.now().strftime("%d/%m/%Y %H:%M")
+    if hu:
+        hashes[hu] = datetime.now().strftime("%d/%m/%Y %H:%M")
     _salvar(FRAUDE_FILE, hashes)
     return False
 
@@ -216,33 +230,43 @@ async def buscar_midias_storage(bot, forcar=False) -> list:
 
         while erros_seguidos < 10 and msg_id < 500:
             try:
-                msg = await bot.forward_message(
+                # Usa get_messages para pegar o file_id sem encaminhar para ninguém
+                msg = await bot.copy_message(
+                    chat_id=CONFIG["ADMIN_IDS"][0],
+                    from_chat_id=canal_id,
+                    message_id=msg_id,
+                    disable_notification=True,
+                )
+                # Busca a mensagem copiada para pegar o file_id
+                copied = await bot.forward_message(
                     chat_id=CONFIG["ADMIN_IDS"][0],
                     from_chat_id=canal_id,
                     message_id=msg_id,
                     disable_notification=True,
                 )
                 item = None
-                if msg.photo:
-                    item = {"type": "photo",    "file_id": msg.photo[-1].file_id, "caption": msg.caption or ""}
-                elif msg.video:
-                    item = {"type": "video",    "file_id": msg.video.file_id,     "caption": msg.caption or ""}
-                elif msg.document:
-                    item = {"type": "document", "file_id": msg.document.file_id,  "caption": msg.caption or ""}
-                elif msg.animation:
-                    item = {"type": "animation","file_id": msg.animation.file_id, "caption": msg.caption or ""}
+                if copied.photo:
+                    item = {"type": "photo",    "file_id": copied.photo[-1].file_id, "caption": copied.caption or ""}
+                elif copied.video:
+                    item = {"type": "video",    "file_id": copied.video.file_id,     "caption": copied.caption or ""}
+                elif copied.document:
+                    item = {"type": "document", "file_id": copied.document.file_id,  "caption": copied.caption or ""}
+                elif copied.animation:
+                    item = {"type": "animation","file_id": copied.animation.file_id, "caption": copied.caption or ""}
+
+                # Deleta imediatamente as mensagens temporárias do chat admin
+                try:
+                    await bot.delete_message(CONFIG["ADMIN_IDS"][0], msg.message_id)
+                    await bot.delete_message(CONFIG["ADMIN_IDS"][0], copied.message_id)
+                except:
+                    pass
 
                 if item:
                     midias.append(item)
                     erros_seguidos = 0
-                    # Deleta a mensagem encaminhada (limpeza)
-                    try:
-                        await bot.delete_message(CONFIG["ADMIN_IDS"][0], msg.message_id)
-                    except:
-                        pass
 
                 msg_id += 1
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
 
             except TelegramError:
                 erros_seguidos += 1
@@ -900,6 +924,33 @@ async def cb_admin_liberar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.answer("✅ Liberado!", show_alert=True)
 
 # ═══════════════════════════════════════════════════════
+#  ADMIN — recusar comprovante (fraude manual)
+# ═══════════════════════════════════════════════════════
+
+async def cb_admin_recusar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id not in CONFIG["ADMIN_IDS"]:
+        await q.answer("❌ Sem permissão.", show_alert=True)
+        return
+    uid = int(q.data.split("_")[2])
+    bloquear_usuario(uid, "comprovante recusado pelo admin")
+    try:
+        await ctx.bot.send_message(
+            uid,
+            "❌ *Seu comprovante foi recusado.*\n\n"
+            "O pagamento não foi identificado.\n"
+            "Tente novamente ou contate o suporte.",
+            parse_mode="Markdown"
+        )
+    except TelegramError:
+        pass
+    try:
+        legenda = (q.message.caption or "") + "\n\n🚫 *Recusado pelo admin.*"
+        await q.edit_message_caption(caption=legenda, parse_mode="Markdown")
+    except:
+        await q.answer("🚫 Comprovante recusado!", show_alert=True)
+
+# ═══════════════════════════════════════════════════════
 #  HANDLER — COMPROVANTE
 # ═══════════════════════════════════════════════════════
 
@@ -914,53 +965,92 @@ async def receber_midia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
+    file_id        = None
+    file_unique_id = None
 
-    if file_id and comprovante_ja_usado(file_id):
+    if update.message.photo:
+        file_id        = update.message.photo[-1].file_id
+        file_unique_id = update.message.photo[-1].file_unique_id
+    elif update.message.document:
+        file_id        = update.message.document.file_id
+        file_unique_id = update.message.document.file_unique_id
+
+    # ── Anti-fraude duplo (file_id + file_unique_id) ──
+    if file_id and comprovante_ja_usado(file_id, file_unique_id):
         bloquear_usuario(user.id, "comprovante duplicado")
-        await update.message.reply_text("🚫 *Comprovante já utilizado! Conta suspensa.*", parse_mode="Markdown")
-        for admin_id in CONFIG["ADMIN_IDS"]:
-            await ctx.bot.send_message(
-                admin_id,
-                f"🚨 *FRAUDE* — @{user.username} ID `{user.id}`", parse_mode="Markdown"
-            )
+        await update.message.reply_text(
+            "🚫 *Comprovante já utilizado anteriormente!*\n\n"
+            "Sua conta foi suspensa por tentativa de fraude.",
+            parse_mode="Markdown"
+        )
+        alvo_fraude = CONFIG.get("GRUPO_COMPROVANTES") or None
+        destinos    = [int(alvo_fraude)] if alvo_fraude else CONFIG["ADMIN_IDS"]
+        for dest in destinos:
+            try:
+                await ctx.bot.send_message(
+                    dest,
+                    f"🚨 *TENTATIVA DE FRAUDE DETECTADA*\n\n"
+                    f"👤 @{user.username or 'sem_username'}\n"
+                    f"🆔 `{user.id}`\n"
+                    f"📛 {user.full_name}\n\n"
+                    f"⚠️ Comprovante duplicado — conta bloqueada automaticamente.",
+                    parse_mode="Markdown"
+                )
+            except TelegramError:
+                pass
         return
 
     plano_id = ctx.user_data.get("plano_selecionado", "basic")
     ctx.user_data["aguardando_comprovante"] = False
 
     await update.message.reply_text(
-        "✅ *Comprovante recebido!*\n\nVerificando... você receberá os conteúdos em até 2 minutos. 🙏",
+        "✅ *Comprovante recebido!*\n\n"
+        "Estamos verificando seu pagamento.\n"
+        "Você receberá os conteúdos em até 2 minutos. 🙏",
         parse_mode="Markdown"
     )
 
-    uname = (user.username or "sem_username").replace("_", "-")
-    nome  = user.full_name.replace("_", "-")[:20]
-    cb    = f"adm_liberar_{user.id}_{uname}_{nome}_{plano_id}"
+    uname   = (user.username or "sem_username").replace("_", "-")
+    nome    = user.full_name.replace("_", "-")[:20]
+    cb      = f"adm_liberar_{user.id}_{uname}_{nome}_{plano_id}"
     legenda = (
         f"🧾 *Novo Comprovante*\n"
         f"👤 @{user.username or 'sem_username'}\n"
         f"🆔 `{user.id}`\n"
+        f"📛 {user.full_name}\n"
         f"📦 Plano: {PLANOS.get(plano_id,{}).get('nome','?')}\n"
-        f"💰 Valor: R$ {PLANOS.get(plano_id,{}).get('preco','?')}"
+        f"💰 Valor: R$ {PLANOS.get(plano_id,{}).get('preco','?')}\n"
+        f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     )
     kb_admin = InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"✅ Liberar + Enviar Pack", callback_data=cb)
+        InlineKeyboardButton("✅ Liberar + Enviar Pack", callback_data=cb),
+    ],[
+        InlineKeyboardButton("🚫 Recusar (Fraude)",     callback_data=f"adm_recusar_{user.id}"),
     ]])
+
+    # Envia para o grupo de comprovantes (se configurado) ou para cada admin
+    alvo     = CONFIG.get("GRUPO_COMPROVANTES") or None
+    destinos = [int(alvo)] if alvo else CONFIG["ADMIN_IDS"]
+
     try:
-        for admin_id in CONFIG["ADMIN_IDS"]:
+        for dest in destinos:
             if update.message.photo:
-                await ctx.bot.send_photo(admin_id, update.message.photo[-1].file_id,
-                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
+                await ctx.bot.send_photo(
+                    dest, update.message.photo[-1].file_id,
+                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin
+                )
             elif update.message.document:
-                await ctx.bot.send_document(admin_id, update.message.document.file_id,
-                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
+                await ctx.bot.send_document(
+                    dest, update.message.document.file_id,
+                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin
+                )
+            else:
+                await ctx.bot.send_message(
+                    dest, legenda + "\n\n_(sem imagem anexada)_",
+                    parse_mode="Markdown", reply_markup=kb_admin
+                )
     except TelegramError as e:
-        log.error(e)
+        log.error(f"Erro ao enviar comprovante: {e}")
 
 # ═══════════════════════════════════════════════════════
 #  HANDLER — TEXTO LIVRE
@@ -1055,6 +1145,7 @@ def main():
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(cb_admin_liberar, pattern=r"^adm_liberar_"))
+    app.add_handler(CallbackQueryHandler(cb_admin_recusar, pattern=r"^adm_recusar_"))
     app.add_handler(CallbackQueryHandler(cb_handler))
 
     # Mídia
