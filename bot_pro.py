@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Bot de Vendas +18 — Versão Completa Pro
+Instalação: pip3 install "python-telegram-bot[job-queue]" requests --break-system-packages
+"""
+
 import logging, json, os, asyncio, hashlib
 from datetime import datetime, timedelta
 from typing import Optional
@@ -511,9 +517,24 @@ async def job_storage(context):
 # ═══════════════════════════════════════════
 
 async def cmd_start(update, ctx):
-    if update.effective_chat.type != "private":
+    chat_type = update.effective_chat.type
+    user      = update.effective_user
+
+    # ── Comando /start em GRUPO ──────────────────────
+    # Responde apenas com o menu de vendas no grupo,
+    # sem processar acesso, bloqueio ou follow-up.
+    # Qualquer pessoa pode ver, mas só admins ativaram o bot no grupo.
+    if chat_type in ("group", "supergroup"):
+        await update.message.reply_text(
+            txt_boas_vindas(),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 Comprar Agora — Clique Aqui!", url=f"https://t.me/{ctx.bot.username}")]
+            ])
+        )
         return
-    user = update.effective_user
+
+    # ── Comando /start no PRIVADO ────────────────────
     if esta_bloqueado(user.id):
         await update.message.reply_text("❌ Seu acesso foi suspenso. Contate o suporte.")
         return
