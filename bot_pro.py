@@ -601,6 +601,10 @@ async def job_atualizar_storage(context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # /start só funciona no privado
+    if update.effective_chat.type != "private":
+        return
+
     user = update.effective_user
     if esta_bloqueado(user.id):
         await update.message.reply_text("❌ Seu acesso foi suspenso. Contate o suporte.")
@@ -955,6 +959,10 @@ async def cb_admin_recusar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════
 
 async def receber_midia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Ignora mídias de grupos/canais — só processa no privado
+    if update.effective_chat.type != "private":
+        return
+
     user = update.effective_user
     if esta_bloqueado(user.id):
         return
@@ -1067,8 +1075,28 @@ PALAVRAS = {
 }
 
 async def texto_livre(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Ignora mensagens de grupos/canais — só responde no privado
+    if update.effective_chat.type != "private":
+        return
+
     user  = update.effective_user
     texto = update.message.text.strip()
+
+    # Admin digitou mensagem de broadcast pelo painel
+    if user.id in CONFIG["ADMIN_IDS"] and ctx.user_data.get("aguardando_broadcast"):
+        ctx.user_data["aguardando_broadcast"] = False
+        db = _ler(DB_FILE)
+        enviados, erros = 0, 0
+        for uid_str in db:
+            try:
+                await ctx.bot.send_message(int(uid_str), f"📢 {texto}", parse_mode="Markdown")
+                enviados += 1
+                await asyncio.sleep(0.05)
+            except:
+                erros += 1
+        await update.message.reply_text(f"📢 Broadcast enviado!\n✅ {enviados} entregues | ❌ {erros} erros")
+        return
+
     if esta_bloqueado(user.id):
         return
     registrar_visita(user.id, user.username or "", user.full_name)
@@ -1122,6 +1150,116 @@ async def texto_livre(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 #  MAIN
 # ═══════════════════════════════════════════════════════
 
+async def cb_painel_botoes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Trata os botões do /painel."""
+    q    = update.callback_query
+    data = q.data
+    await q.answer()
+    if q.from_user.id not in CONFIG["ADMIN_IDS"]:
+        await q.answer("❌ Sem permissão.", show_alert=True)
+        return
+
+    db      = _ler(DB_FILE)
+    storage = _ler(STORAGE_FILE)
+
+    if data == "adm_stats":
+        ativos    = {k: v for k, v in db.items() if v.get("acesso")}
+        hoje      = datetime.now().strftime("%d/%m/%Y")
+        hoje_v    = sum(1 for v in ativos.values() if v.get("data_compra","").startswith(hoje))
+        por_plano = {}
+        for v in ativos.values():
+            p = v.get("plano","?")
+            por_plano[p] = por_plano.get(p,0) + 1
+        linhas = "\n".join([f"   {PLANOS.get(k,{}).get('emoji','?')} {k}: {n}" for k,n in por_plano.items()])
+        await q.message.reply_text(
+            f"📊 *Estatísticas*\n\n"
+            f"👥 Total: `{len(db)}`\n"
+            f"✅ Ativos: `{len(ativos)}`\n"
+            f"📅 Hoje: `{hoje_v}`\n\n"
+            f"📦 Por plano:\n{linhas or '   nenhum'}",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_clientes":
+        ativos = {k: v for k, v in db.items() if v.get("acesso")}
+        if not ativos:
+            await q.message.reply_text("Nenhum cliente ativo.")
+            return
+        linhas = [
+            f"• `{uid}` @{v.get('username','?')} [{v.get('plano','?')}] {v.get('data_compra','?')}"
+            for uid, v in list(ativos.items())[:20]
+        ]
+        await q.message.reply_text(
+            f"📋 *Clientes ativos ({len(ativos)}):*\n\n" + "\n".join(linhas),
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_storage":
+        midias = storage.get("midias", [])
+        fotos  = sum(1 for m in midias if m["type"] == "photo")
+        videos = sum(1 for m in midias if m["type"] == "video")
+        gifs   = sum(1 for m in midias if m["type"] == "animation")
+        atz    = storage.get("atualizado","nunca")
+        await q.message.reply_text(
+            f"📦 *Storage*\n\n"
+            f"📸 Fotos: `{fotos}`\n"
+            f"🎬 Vídeos: `{videos}`\n"
+            f"🎞️ GIFs: `{gifs}`\n"
+            f"📊 Total: `{len(midias)}`\n"
+            f"🕐 Atualizado: {atz}",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_atualizar_storage":
+        await q.message.reply_text("🔄 Atualizando storage...")
+        midias = await buscar_midias_storage(ctx.bot, forcar=True)
+        await q.message.reply_text(f"✅ Storage atualizado! `{len(midias)}` mídias.", parse_mode="Markdown")
+
+    elif data == "adm_cupons":
+        cupons = _ler(CUPONS_FILE) or CUPONS
+        linhas = []
+        for cod, c in cupons.items():
+            tipo  = "%" if c["tipo"] == "percent" else "R$"
+            linhas.append(f"🎁 `{cod}` — {c['desconto']}{tipo} | {c['usos']}/{c['usos_max']} usos")
+        await q.message.reply_text(
+            f"🎁 *Cupons ({len(cupons)}):*\n\n" + "\n".join(linhas) if linhas else "Nenhum cupom.",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_relatorio":
+        ativos = {k: v for k, v in db.items() if v.get("acesso") and v.get("data_compra")}
+        hoje   = datetime.now()
+        dias   = {}
+        for i in range(7):
+            dia = (hoje - timedelta(days=i)).strftime("%d/%m/%Y")
+            dias[dia] = {"vendas": 0, "receita": 0}
+        for uid, d in ativos.items():
+            data_c = d.get("data_compra","")[:10]
+            if data_c in dias:
+                preco = PLANOS.get(d.get("plano","basic"),{}).get("preco_int",0)
+                dias[data_c]["vendas"]  += 1
+                dias[data_c]["receita"] += preco
+        linhas       = []
+        receita_total = 0
+        total_vendas  = 0
+        for dia, info in sorted(dias.items(), reverse=True):
+            barra = "█" * info["vendas"] if info["vendas"] else "─"
+            linhas.append(f"`{dia}` {barra} {info['vendas']}v — R$ {info['receita']/100:.2f}")
+            receita_total += info["receita"]
+            total_vendas  += info["vendas"]
+        await q.message.reply_text(
+            f"📈 *Relatório 7 dias*\n\n" + "\n".join(linhas)
+            + f"\n\n💰 Total: R$ {receita_total/100:.2f} | 🛒 {total_vendas} vendas",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_broadcast_menu":
+        ctx.user_data["aguardando_broadcast"] = True
+        await q.message.reply_text(
+            "📢 *Broadcast*\n\nDigite a mensagem que deseja enviar para *todos os usuários*:",
+            parse_mode="Markdown"
+        )
+
 def main():
     if CONFIG["TOKEN"] == "SEU_TOKEN_AQUI":
         print("\n❌ Configure o TOKEN nas variáveis do Railway!\n")
@@ -1142,9 +1280,16 @@ def main():
     app.add_handler(CommandHandler("clientes",          cmd_clientes))
     app.add_handler(CommandHandler("cupom_add",         cmd_cupom_add))
     app.add_handler(CommandHandler("admin",             cmd_admin))
+    app.add_handler(CommandHandler("painel",            cmd_painel))
+    app.add_handler(CommandHandler("buscar",            cmd_buscar))
+    app.add_handler(CommandHandler("broadcast_ativos",  cmd_broadcast_ativos))
+    app.add_handler(CommandHandler("cupons",            cmd_cupons))
+    app.add_handler(CommandHandler("relatorio",         cmd_relatorio))
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(cb_admin_liberar, pattern=r"^adm_liberar_"))
+    app.add_handler(CallbackQueryHandler(cb_admin_liberar,  pattern=r"^adm_liberar_"))
+    app.add_handler(CallbackQueryHandler(cb_admin_recusar,  pattern=r"^adm_recusar_"))
+    app.add_handler(CallbackQueryHandler(cb_painel_botoes,  pattern=r"^adm_"))
     app.add_handler(CallbackQueryHandler(cb_admin_recusar, pattern=r"^adm_recusar_"))
     app.add_handler(CallbackQueryHandler(cb_handler))
 
