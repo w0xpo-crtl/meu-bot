@@ -16,7 +16,7 @@ from telegram.error import TelegramError
 
 CONFIG = {
     "TOKEN":              os.environ.get("TOKEN",             "SEU_TOKEN_AQUI"),
-    "ADMIN_ID":           int(os.environ.get("ADMIN_ID",      "123456789")),
+    "ADMIN_IDS":          [int(x.strip()) for x in os.environ.get("ADMIN_ID", "123456789").split(",")],
     "CANAL_ID":           os.environ.get("CANAL_ID",          ""),        # canal de acesso dos clientes
     "CANAL_STORAGE_ID":   os.environ.get("CANAL_STORAGE_ID",  ""),        # canal secreto com seus conteúdos
     "LINK_CONTEUDO":      os.environ.get("LINK_CONTEUDO",     "https://seusite.com/conteudo"),
@@ -217,7 +217,7 @@ async def buscar_midias_storage(bot, forcar=False) -> list:
         while erros_seguidos < 10 and msg_id < 500:
             try:
                 msg = await bot.forward_message(
-                    chat_id=CONFIG["ADMIN_ID"],
+                    chat_id=CONFIG["ADMIN_IDS"][0],
                     from_chat_id=canal_id,
                     message_id=msg_id,
                     disable_notification=True,
@@ -237,7 +237,7 @@ async def buscar_midias_storage(bot, forcar=False) -> list:
                     erros_seguidos = 0
                     # Deleta a mensagem encaminhada (limpeza)
                     try:
-                        await bot.delete_message(CONFIG["ADMIN_ID"], msg.message_id)
+                        await bot.delete_message(CONFIG["ADMIN_IDS"][0], msg.message_id)
                     except:
                         pass
 
@@ -610,7 +610,7 @@ async def cmd_reenviar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_atualizar_storage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Admin: /atualizar_storage — recarrega as mídias do canal secreto."""
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     await update.message.reply_text("🔄 Atualizando mídias do canal secreto...")
     midias = await buscar_midias_storage(ctx.bot, forcar=True)
@@ -621,7 +621,7 @@ async def cmd_atualizar_storage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_storage_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Admin: /storage_info — mostra quantas mídias tem no cache."""
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     storage = _ler(STORAGE_FILE)
     midias  = storage.get("midias", [])
@@ -642,7 +642,7 @@ async def cmd_storage_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_liberar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     args = ctx.args
     if len(args) < 2:
@@ -663,7 +663,7 @@ async def cmd_liberar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Salvo, erro ao notificar: {e}")
 
 async def cmd_bloquear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     args = ctx.args
     if not args:
@@ -674,7 +674,7 @@ async def cmd_bloquear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚫 `{uid}` bloqueado.", parse_mode="Markdown")
 
 async def cmd_desbloquear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     args = ctx.args
     if not args:
@@ -683,7 +683,7 @@ async def cmd_desbloquear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ `{args[0]}` desbloqueado.", parse_mode="Markdown")
 
 async def cmd_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     if not ctx.args:
         await update.message.reply_text("Uso: /broadcast <mensagem>")
@@ -701,7 +701,7 @@ async def cmd_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📢 Enviado!\n✅ {enviados} | ❌ {erros}")
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     db     = _ler(DB_FILE)
     ativos = {k: v for k, v in db.items() if v.get("acesso")}
@@ -722,7 +722,7 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_clientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     db     = _ler(DB_FILE)
     ativos = {k: v for k, v in db.items() if v.get("acesso")}
@@ -739,7 +739,7 @@ async def cmd_clientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_cupom_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     args = ctx.args
     if len(args) < 4:
@@ -751,7 +751,7 @@ async def cmd_cupom_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Cupom `{args[0].upper()}` criado!", parse_mode="Markdown")
 
 async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != CONFIG["ADMIN_ID"]:
+    if update.effective_user.id not in CONFIG["ADMIN_IDS"]:
         return
     await update.message.reply_text(
         "🛠️ *Comandos Admin*\n\n"
@@ -878,7 +878,7 @@ async def cb_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cb_admin_liberar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    if q.from_user.id != CONFIG["ADMIN_ID"]:
+    if q.from_user.id not in CONFIG["ADMIN_IDS"]:
         await q.answer("❌ Sem permissão.", show_alert=True)
         return
     partes   = q.data.split("_", 5)
@@ -923,10 +923,11 @@ async def receber_midia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if file_id and comprovante_ja_usado(file_id):
         bloquear_usuario(user.id, "comprovante duplicado")
         await update.message.reply_text("🚫 *Comprovante já utilizado! Conta suspensa.*", parse_mode="Markdown")
-        await ctx.bot.send_message(
-            CONFIG["ADMIN_ID"],
-            f"🚨 *FRAUDE* — @{user.username} ID `{user.id}`", parse_mode="Markdown"
-        )
+        for admin_id in CONFIG["ADMIN_IDS"]:
+            await ctx.bot.send_message(
+                admin_id,
+                f"🚨 *FRAUDE* — @{user.username} ID `{user.id}`", parse_mode="Markdown"
+            )
         return
 
     plano_id = ctx.user_data.get("plano_selecionado", "basic")
@@ -951,12 +952,13 @@ async def receber_midia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton(f"✅ Liberar + Enviar Pack", callback_data=cb)
     ]])
     try:
-        if update.message.photo:
-            await ctx.bot.send_photo(CONFIG["ADMIN_ID"], update.message.photo[-1].file_id,
-                caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
-        elif update.message.document:
-            await ctx.bot.send_document(CONFIG["ADMIN_ID"], update.message.document.file_id,
-                caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
+        for admin_id in CONFIG["ADMIN_IDS"]:
+            if update.message.photo:
+                await ctx.bot.send_photo(admin_id, update.message.photo[-1].file_id,
+                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
+            elif update.message.document:
+                await ctx.bot.send_document(admin_id, update.message.document.file_id,
+                    caption=legenda, parse_mode="Markdown", reply_markup=kb_admin)
     except TelegramError as e:
         log.error(e)
 
